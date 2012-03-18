@@ -20,14 +20,21 @@ import net.minecraft.server.Packet20NamedEntitySpawn;
 import net.minecraft.server.Packet29DestroyEntity;
 import net.minecraft.server.Packet70Bed;
 import net.minecraft.server.Packet9Respawn;
-
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
 import org.bukkit.entity.Player;
-import org.bukkit.event.Event;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.event.player.PlayerJoinEvent;
+import org.bukkit.event.player.PlayerKickEvent;
+import org.bukkit.event.player.PlayerLoginEvent;
+import org.bukkit.event.player.PlayerPickupItemEvent;
+import org.bukkit.event.player.PlayerPreLoginEvent;
 import org.bukkit.plugin.PluginDescriptionFile;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -39,12 +46,11 @@ import org.json.simple.parser.JSONParser;
  * @author Alex "Arcalyth" Riebs (original code)
  * @author Thulinma
  */
-public class MixedModeAuth extends JavaPlugin {
+public class MixedModeAuth extends JavaPlugin implements Listener {
   Logger log = Logger.getLogger("Minecraft");
-  private final MixedModeAuthPlayerListener playerListener = new MixedModeAuthPlayerListener(this);
-  private final MixedModeAuthBlockListener blockListener = new MixedModeAuthBlockListener(this);
 
   private HashMap<String, JSONObject> users = new HashMap<String, JSONObject>();
+  private HashMap<String, Integer> badNames = new HashMap<String, Integer>();
   public Configuration configuration;
 
   @Override
@@ -97,26 +103,17 @@ public class MixedModeAuth extends JavaPlugin {
     if (!configuration.getBoolean("renameguests", true)){
       log.info("[MixedModeAuth] Guest renaming disabled - all guests will kick each other off!");
     }
-    pm.registerEvent(Event.Type.PLAYER_JOIN, playerListener, Event.Priority.Monitor, this);
-    pm.registerEvent(Event.Type.PLAYER_PRELOGIN, playerListener, Event.Priority.Normal, this);
-    if (configuration.getBoolean("blockinteractions", true)){
-      pm.registerEvent(Event.Type.PLAYER_PICKUP_ITEM, playerListener, Event.Priority.High, this);
-      pm.registerEvent(Event.Type.PLAYER_INTERACT, playerListener, Event.Priority.High, this);
-      pm.registerEvent(Event.Type.BLOCK_BREAK, blockListener, Event.Priority.High, this);
-    }else{
+    if (!configuration.getBoolean("blockinteractions", true)){
       log.info("[MixedModeAuth] Guest interactions will not be blocked by this plugin.");
     }
-    if (configuration.getBoolean("kickusednames", true)){
-      pm.registerEvent(Event.Type.PLAYER_LOGIN, playerListener, Event.Priority.Normal, this);
-      pm.registerEvent(Event.Type.PLAYER_KICK, playerListener, Event.Priority.Normal, this);
-    }
+    pm.registerEvents(this, this);
   }
 
   public boolean onCommand(CommandSender sender, Command cmd, String commandLabel, String[] args) {
     if (cmd.getName().equalsIgnoreCase("auth")) {
       // [?] Provide help on /auth
       if (args.length <= 0) return false;
-      
+
       if (args[0].equals("create") || args[0].equals("new") || args[0].equals("newaccount") || args[0].equals("createaccount")){
         if (sender.hasPermission("mixedmodeauth.create")){
           if (args.length < 3){
@@ -135,7 +132,7 @@ public class MixedModeAuth extends JavaPlugin {
         }
         return true;
       }
-      
+
       if (args[0].equals("del") || args[0].equals("delete")){
         if (sender.hasPermission("mixedmodeauth.delete")){
           if (args.length < 2){
@@ -154,7 +151,7 @@ public class MixedModeAuth extends JavaPlugin {
         }
         return true;
       }
-      
+
       if (!(sender instanceof Player)) {
         sender.sendMessage("You can only delete (/auth del) or create (/auth create) users from the console");
         return true;
@@ -340,11 +337,11 @@ public class MixedModeAuth extends JavaPlugin {
     p.setPlayerListName(reName);
     p.recalculatePermissions();
     Packet9Respawn p9 = new Packet9Respawn();
-    p9.a = p.getWorld().getSeed();
+    p9.a = (int)p.getWorld().getSeed();
     p9.b = p.getWorld().getEnvironment().getId();
     p9.c = p.getWorld().getDifficulty().getValue();
     p9.d = p.getWorld().getMaxHeight();
-    p9.e = p.getGameMode().getValue();
+    p9.e = net.minecraft.server.WorldType.getType(p.getWorld().getWorldType().getName());
     ((CraftPlayer) p).getHandle().netServerHandler.sendPacket(p9);
     ((CraftPlayer) p).getHandle().netServerHandler.sendPacket(new Packet70Bed(3, p.getGameMode().getValue()));
     Location loc = p.getLocation();
@@ -358,15 +355,15 @@ public class MixedModeAuth extends JavaPlugin {
     p20.g = (byte) ((int) (loc.getPitch() * 256.0F / 360.0F));
     p20.h = p.getItemInHand().getTypeId();
     Packet29DestroyEntity p29 = new Packet29DestroyEntity(p.getEntityId());
-    
+
     for (Player p1 : Bukkit.getServer().getOnlinePlayers()) {
       if (p1 == p){continue;}
       ((CraftPlayer) p1).getHandle().netServerHandler.sendPacket(p29);
       ((CraftPlayer) p1).getHandle().netServerHandler.sendPacket(p20);
     }
-	  this.getServer().getPluginManager().callEvent(new FakePlayerJoinEvent(p, reName+" logged on through /auth"));
+    this.getServer().getPluginManager().callEvent(new FakePlayerJoinEvent(p, reName+" logged on through /auth"));
   }
-  
+
   public void sendMess(CommandSender to, String mess) {
     String message = configuration.getString("messages."+mess);
     if (message != null && !message.isEmpty()){
@@ -375,5 +372,136 @@ public class MixedModeAuth extends JavaPlugin {
       }
     }
   }
-  
+
+  private void setPlayerGuest(Player player){
+    sendMess(player, "guestwelcome");
+    if (configuration.getBoolean("renameguests", true)){
+      // rename to player_entID to prevent people kicking each other off
+      renameUser(player, "Player_"+player.getEntityId());
+    }else{
+      renameUser(player, "Player");
+    }
+    //clear inventory
+    player.getInventory().clear();
+    //teleport to default spawn loc
+    Location spawnat = player.getWorld().getSpawnLocation();
+    while (!spawnat.getBlock().isEmpty()){spawnat.add(0, 1, 0);}
+    spawnat.add(0, 1, 0);
+    player.teleport(spawnat);
+    log.info("[MixedModeAuth] Guest user has been asked to login.");
+
+    if (configuration.getLong("kicktimeout") > 0){
+      Task kicktask = new Task(this, player) {
+        public void run() {
+          if (!isUser(((Player)getArg(0)).getName())){
+            ((Player)getArg(0)).kickPlayer(configuration.getString("messages.kicktimeout"));
+          }
+        }
+      };
+      kicktask.startDelayed(configuration.getLong("kicktimeout")*20, false);
+    }
+
+  }
+
+  /* The following two events deal with recognizing logins */
+  @EventHandler
+  public void onPlayerPreLogin(PlayerPreLoginEvent event){
+    //if this person would have been allowed, but is not because of failing the verify, let them in
+    if (event.getResult() != PlayerPreLoginEvent.Result.ALLOWED){
+      if (event.getKickMessage().contains("Failed to verify")){
+        log.info("[MixedModeAuth] Nonpremium user "+event.getName()+", overriding online mode protection!");
+        badNames.put(event.getName(), (int) (System.currentTimeMillis() / 1000L));
+        event.allow();
+      }
+    }else{
+      log.info("[MixedModeAuth] User "+event.getName()+" detected as premium user.");
+    }
+  }
+
+  @EventHandler
+  public void onPlayerJoin(PlayerJoinEvent event) {
+    if(event instanceof FakePlayerJoinEvent) return;
+    Player player = event.getPlayer();
+    String name = player.getName();
+    Boolean isGood = true;
+    if (name.toLowerCase().startsWith("player")){
+      setPlayerGuest(player);
+    } else {
+      //if secure mode is enabled...
+      if (configuration.getBoolean("securemode", true)){
+        // Check if player is real authenticated player
+        if (badNames.containsKey(name)){
+          if (badNames.get(name) > ((int)(System.currentTimeMillis() / 1000L) - 30)){
+            isGood = false;
+          }          
+        }else{
+          if (configuration.getBoolean("legacymode", false)){
+            isGood = getURL("http://session.minecraft.net/game/checkserver.jsp?premium="+name).equals("PREMIUM");
+          }
+        }
+        if (isGood){
+          // Tell real players to enter themselves into the AuthDB
+          if (!isUser(name)) {
+            sendMess(player, "premiumwelcome");
+            log.info("[MixedModeAuth] Premium user " + name + " asked to create account.");
+          } else {
+            sendMess(player, "premiumautolog");
+            log.info("[MixedModeAuth] Premium user " + name + " auto-identified.");
+          }
+        } else {
+          badNames.remove(name);
+          setPlayerGuest(player);
+        }
+      } else {
+        badNames.remove(name);
+        setPlayerGuest(player);
+      }
+    }
+  }
+
+  /* The following two functions deal with kicking when names are in use */
+  @EventHandler
+  public void onPlayerLogin(PlayerLoginEvent event){
+    if (!configuration.getBoolean("kickusednames", true)) return;
+    if (getServer().getPlayerExact(event.getEventName()) != null){
+      event.disallow(PlayerLoginEvent.Result.KICK_OTHER, configuration.getString("messages.kickusedname"));
+    }
+  }
+
+  @EventHandler
+  public void onPlayerKick(PlayerKickEvent event) {
+    if (!configuration.getBoolean("kickusednames", true)) return;
+    if (event.getReason().equals("Logged in from another location.")) {
+      if (isUser(event.getPlayer().getName())){event.setCancelled(true);}
+    }
+  }
+
+  /* The following three functions deal with blocking interactions */
+  @EventHandler
+  public void onPlayerInteract(PlayerInteractEvent event){
+    Player player = event.getPlayer();
+    if (!isUser(player.getName()) && configuration.getBoolean("blockinteractions", true)) {
+      event.setCancelled(true);
+      sendMess(player, "interactionblocked");
+    }
+  }
+
+  @EventHandler
+  public void onPlayerPickupItem(PlayerPickupItemEvent event){
+    Player player = event.getPlayer();
+    if (!isUser(player.getName()) && configuration.getBoolean("blockinteractions", true)) {
+      event.setCancelled(true);
+      sendMess(player, "interactionblocked");
+    }
+  }
+
+  @EventHandler
+  public void onBlockBreak(BlockBreakEvent event) {
+    Player player = event.getPlayer();
+    if (!isUser(player.getName()) && configuration.getBoolean("blockinteractions", true)) {
+      event.setCancelled(true);
+      sendMess(player, "interactionblocked");
+    }
+  }
+
 }

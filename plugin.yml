@@ -1,6 +1,6 @@
 name: MixedModeAuth
 main: thulinma.mixedmodeauth.MixedModeAuth
-version: 2.4
+version: 3.0
 description: Provides a mixed mode between offline and online server modes - allowing for fully secured servers that work both with and without a valid minecraft login.
 authors: [Thulinma]
 

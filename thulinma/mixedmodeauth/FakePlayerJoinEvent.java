@@ -7,10 +7,4 @@ public class FakePlayerJoinEvent extends PlayerJoinEvent {
 	public FakePlayerJoinEvent(Player who, String joinMessage) {
 		super(who, joinMessage);
 	}
-
-	/**
-	 * 
-	 */
-	private static final long serialVersionUID = 1L;
-
 }
