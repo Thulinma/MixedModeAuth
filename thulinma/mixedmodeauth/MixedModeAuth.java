@@ -24,6 +24,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
+import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.craftbukkit.entity.CraftPlayer;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
@@ -51,7 +52,6 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
 
   private HashMap<String, JSONObject> users = new HashMap<String, JSONObject>();
   private HashMap<String, Integer> badNames = new HashMap<String, Integer>();
-  public Configuration configuration;
 
   @Override
   public void onDisable() {
@@ -66,44 +66,45 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
 
     getDataFolder().mkdirs();
     loadUsers();
-    configuration = new Configuration(this);
-    configuration.load();
+    FileConfiguration conf = this.getConfig();
+    conf.options().copyDefaults(true);
+    saveConfig();
     if (!getServer().getOnlineMode()){
       log.warning("[MixedModeAuth] The server is setup in offline mode - cannot use secure mode! Please set server to online mode to enable secure mode!");
-      configuration.set("securemode", false);
+      conf.set("securemode", false);
     }
-    if (configuration.getBoolean("securemode", true)){
-      if (!configuration.getBoolean("legacymode", false)){
+    if (conf.getBoolean("securemode", true)){
+      if (!conf.getBoolean("legacymode", false)){
         if (!this.getServer().getVersion().contains("PreLogMod")){
           log.warning("[MixedModeAuth] You do not have the server mod installed! Switching to legacy mode...");
-          configuration.set("legacymode", true);
+          conf.set("legacymode", true);
         }
       }
-      if (configuration.getBoolean("legacymode", false)){
+      if (conf.getBoolean("legacymode", false)){
         if (!getURL("http://session.minecraft.net/game/checkserver.jsp?mixver=1").equals("MIXV1")){
           log.warning("[MixedModeAuth] You do not appear to have properly set up the latest checkserver script and host forward. Legacy mode disabled.");
-          configuration.set("legacymode", false);
+          conf.set("legacymode", false);
           if (!this.getServer().getVersion().contains("PreLogMod")){
             log.warning("[MixedModeAuth] No valid checkserver script and no server mod installed - disabling secure mode.");
-            configuration.set("securemode", false);
+            conf.set("securemode", false);
           }
         }
       }
     }
-    if (!configuration.getBoolean("securemode", true)){
+    if (!conf.getBoolean("securemode", true)){
       log.warning("[MixedModeAuth] Secure mode is turned OFF! Autologin disabled, everyone has to login with their username and password.");
       log.info("[MixedModeAuth] "+pdfFile.getVersion()+" enabled WITHOUT secure mode.");
     }else{
-      if (!configuration.getBoolean("legacymode", false)){
+      if (!conf.getBoolean("legacymode", false)){
         log.info("[MixedModeAuth] "+pdfFile.getVersion()+" enabled in modded secure mode.");
       }else{
         log.info("[MixedModeAuth] "+pdfFile.getVersion()+" enabled in legacy secure mode.");
       }
     }
-    if (!configuration.getBoolean("renameguests", true)){
+    if (!conf.getBoolean("renameguests", true)){
       log.info("[MixedModeAuth] Guest renaming disabled - all guests will kick each other off!");
     }
-    if (!configuration.getBoolean("blockinteractions", true)){
+    if (!conf.getBoolean("blockinteractions", true)){
       log.info("[MixedModeAuth] Guest interactions will not be blocked by this plugin.");
     }
     pm.registerEvents(this, this);
@@ -365,7 +366,7 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
   }
 
   public void sendMess(CommandSender to, String mess) {
-    String message = configuration.getString("messages."+mess);
+    String message = getConfig().getString("messages."+mess);
     if (message != null && !message.isEmpty()){
       for (String line: message.split("\n")) {
         to.sendMessage(line);
@@ -373,9 +374,9 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
     }
   }
 
-  private void setPlayerGuest(Player player){
+  private void setPlayerGuest(final Player player){
     sendMess(player, "guestwelcome");
-    if (configuration.getBoolean("renameguests", true)){
+    if (getConfig().getBoolean("renameguests", true)){
       // rename to player_entID to prevent people kicking each other off
       renameUser(player, "Player_"+player.getEntityId());
     }else{
@@ -390,15 +391,15 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
     player.teleport(spawnat);
     log.info("[MixedModeAuth] Guest user has been asked to login.");
 
-    if (configuration.getLong("kicktimeout") > 0){
-      Task kicktask = new Task(this, player) {
+    if (getConfig().getLong("kicktimeout") > 0){
+      Runnable kicktask = new Runnable() {
         public void run() {
-          if (!isUser(((Player)getArg(0)).getName())){
-            ((Player)getArg(0)).kickPlayer(configuration.getString("messages.kicktimeout"));
+          if (!isUser(player.getName())){
+            player.kickPlayer(getConfig().getString("messages.kicktimeout"));
           }
         }
       };
-      kicktask.startDelayed(configuration.getLong("kicktimeout")*20, false);
+      getServer().getScheduler().scheduleSyncDelayedTask(MixedModeAuth.this, kicktask, getConfig().getLong("kicktimeout")*20);
     }
 
   }
@@ -428,14 +429,14 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
       setPlayerGuest(player);
     } else {
       //if secure mode is enabled...
-      if (configuration.getBoolean("securemode", true)){
+      if (getConfig().getBoolean("securemode", true)){
         // Check if player is real authenticated player
         if (badNames.containsKey(name)){
           if (badNames.get(name) > ((int)(System.currentTimeMillis() / 1000L) - 30)){
             isGood = false;
           }          
         }else{
-          if (configuration.getBoolean("legacymode", false)){
+          if (getConfig().getBoolean("legacymode", false)){
             isGood = getURL("http://session.minecraft.net/game/checkserver.jsp?premium="+name).equals("PREMIUM");
           }
         }
@@ -462,15 +463,15 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
   /* The following two functions deal with kicking when names are in use */
   @EventHandler
   public void onPlayerLogin(PlayerLoginEvent event){
-    if (!configuration.getBoolean("kickusednames", true)) return;
+    if (!getConfig().getBoolean("kickusednames", true)) return;
     if (getServer().getPlayerExact(event.getEventName()) != null){
-      event.disallow(PlayerLoginEvent.Result.KICK_OTHER, configuration.getString("messages.kickusedname"));
+      event.disallow(PlayerLoginEvent.Result.KICK_OTHER, getConfig().getString("messages.kickusedname"));
     }
   }
 
   @EventHandler
   public void onPlayerKick(PlayerKickEvent event) {
-    if (!configuration.getBoolean("kickusednames", true)) return;
+    if (!getConfig().getBoolean("kickusednames", true)) return;
     if (event.getReason().equals("Logged in from another location.")) {
       if (isUser(event.getPlayer().getName())){event.setCancelled(true);}
     }
@@ -480,7 +481,7 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
   @EventHandler
   public void onPlayerInteract(PlayerInteractEvent event){
     Player player = event.getPlayer();
-    if (!isUser(player.getName()) && configuration.getBoolean("blockinteractions", true)) {
+    if (!isUser(player.getName()) && getConfig().getBoolean("blockinteractions", true)) {
       event.setCancelled(true);
       sendMess(player, "interactionblocked");
     }
@@ -489,7 +490,7 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
   @EventHandler
   public void onPlayerPickupItem(PlayerPickupItemEvent event){
     Player player = event.getPlayer();
-    if (!isUser(player.getName()) && configuration.getBoolean("blockinteractions", true)) {
+    if (!isUser(player.getName()) && getConfig().getBoolean("blockinteractions", true)) {
       event.setCancelled(true);
       sendMess(player, "interactionblocked");
     }
@@ -498,7 +499,7 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
   @EventHandler
   public void onBlockBreak(BlockBreakEvent event) {
     Player player = event.getPlayer();
-    if (!isUser(player.getName()) && configuration.getBoolean("blockinteractions", true)) {
+    if (!isUser(player.getName()) && getConfig().getBoolean("blockinteractions", true)) {
       event.setCancelled(true);
       sendMess(player, "interactionblocked");
     }
