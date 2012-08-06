@@ -340,8 +340,8 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
     Packet9Respawn p9 = new Packet9Respawn();
     p9.a = (int)p.getWorld().getSeed();
     p9.b = p.getWorld().getEnvironment().getId();
-    p9.c = p.getWorld().getDifficulty().getValue();
-    p9.d = p.getWorld().getMaxHeight();
+    p9.c = p.getWorld().getMaxHeight(); 
+    p9.d = net.minecraft.server.EnumGamemode.a(p.getGameMode().getValue());
     p9.e = net.minecraft.server.WorldType.getType(p.getWorld().getWorldType().getName());
     ((CraftPlayer) p).getHandle().netServerHandler.sendPacket(p9);
     ((CraftPlayer) p).getHandle().netServerHandler.sendPacket(new Packet70Bed(3, p.getGameMode().getValue()));
