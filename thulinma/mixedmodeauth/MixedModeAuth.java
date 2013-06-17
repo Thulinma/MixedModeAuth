@@ -16,6 +16,7 @@ import java.net.URLConnection;
 import java.util.HashMap;
 import java.util.logging.Logger;
 
+import net.minecraft.server.EnumGamemode;
 import net.minecraft.server.Packet20NamedEntitySpawn;
 import net.minecraft.server.Packet29DestroyEntity;
 import net.minecraft.server.Packet70Bed;
@@ -30,12 +31,12 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.player.AsyncPlayerPreLoginEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerKickEvent;
 import org.bukkit.event.player.PlayerLoginEvent;
 import org.bukkit.event.player.PlayerPickupItemEvent;
-import org.bukkit.event.player.PlayerPreLoginEvent;
 import org.bukkit.plugin.PluginDescriptionFile;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -76,7 +77,7 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
     if (conf.getBoolean("securemode", true)){
       if (!conf.getBoolean("legacymode", false)){
         if (!this.getServer().getVersion().contains("PreLogMod")){
-          log.warning("[MixedModeAuth] You do not have the server mod installed! Switching to legacy mode...");
+          log.warning("[MixedModeAuth] You do not have the server mod installed! Switching to legacy mode..");
           conf.set("legacymode", true);
         }
       }
@@ -338,13 +339,13 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
     p.setPlayerListName(reName);
     p.recalculatePermissions();
     Packet9Respawn p9 = new Packet9Respawn();
-    p9.a = (int)p.getWorld().getSeed();
-    p9.b = p.getWorld().getEnvironment().getId();
-    p9.c = p.getWorld().getDifficulty().getValue();
-    p9.d = p.getWorld().getMaxHeight();
+    p9.a = (int)p.getWorld().getEnvironment().getId();
+    p9.b = p.getWorld().getDifficulty().getValue();
+    p9.c = p.getWorld().getMaxHeight();
+    p9.d = EnumGamemode.a(p.getGameMode().getValue());
     p9.e = net.minecraft.server.WorldType.getType(p.getWorld().getWorldType().getName());
-    ((CraftPlayer) p).getHandle().netServerHandler.sendPacket(p9);
-    ((CraftPlayer) p).getHandle().netServerHandler.sendPacket(new Packet70Bed(3, p.getGameMode().getValue()));
+    ((CraftPlayer) p).getHandle().playerConnection.sendPacket(p9);
+    ((CraftPlayer) p).getHandle().playerConnection.sendPacket(new Packet70Bed(3, p.getGameMode().getValue()));
     Location loc = p.getLocation();
     Packet20NamedEntitySpawn p20 = new Packet20NamedEntitySpawn();
     p20.a = p.getEntityId();
@@ -359,8 +360,8 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
 
     for (Player p1 : Bukkit.getServer().getOnlinePlayers()) {
       if (p1 == p){continue;}
-      ((CraftPlayer) p1).getHandle().netServerHandler.sendPacket(p29);
-      ((CraftPlayer) p1).getHandle().netServerHandler.sendPacket(p20);
+      ((CraftPlayer) p1).getHandle().playerConnection.sendPacket(p29);
+      ((CraftPlayer) p1).getHandle().playerConnection.sendPacket(p20);
     }
     this.getServer().getPluginManager().callEvent(new FakePlayerJoinEvent(p, reName+" logged on through /auth"));
   }
@@ -406,9 +407,9 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
 
   /* The following two events deal with recognizing logins */
   @EventHandler
-  public void onPlayerPreLogin(PlayerPreLoginEvent event){
+  public void onAsyncPlayerPreLogin(AsyncPlayerPreLoginEvent event){
     //if this person would have been allowed, but is not because of failing the verify, let them in
-    if (event.getResult() != PlayerPreLoginEvent.Result.ALLOWED){
+    if (event.getLoginResult() != AsyncPlayerPreLoginEvent.Result.ALLOWED){
       if (event.getKickMessage().contains("Failed to verify")){
         log.info("[MixedModeAuth] Nonpremium user "+event.getName()+", overriding online mode protection!");
         badNames.put(event.getName(), (int) (System.currentTimeMillis() / 1000L));
@@ -428,7 +429,7 @@ public class MixedModeAuth extends JavaPlugin implements Listener {
     if (name.toLowerCase().startsWith("player")){
       setPlayerGuest(player);
     } else {
-      //if secure mode is enabled...
+      //if secure mode is enabled..
       if (getConfig().getBoolean("securemode", true)){
         // Check if player is real authenticated player
         if (badNames.containsKey(name)){
